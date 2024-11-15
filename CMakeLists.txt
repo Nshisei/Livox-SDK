@@ -3,7 +3,6 @@ cmake_minimum_required(VERSION 3.0)
 project(livox_sdk)
 
 set(CMAKE_CXX_STANDARD 11)
-
 message(STATUS "main project dir: " ${PROJECT_SOURCE_DIR})
 
 if (CMAKE_CROSSCOMPILING)
@@ -25,3 +24,5 @@ add_subdirectory(sample_cc/hub)
 add_subdirectory(sample_cc/lidar)
 add_subdirectory(sample_cc/trouble_shooting)
 add_subdirectory(sample_cc/lidar_utc_sync)
+add_subdirectory(sample_cc/my_lidar)
+add_subdirectory(sample_cc/point_cloud)
