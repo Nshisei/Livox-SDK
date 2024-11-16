@@ -37,6 +37,8 @@
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 #include <deque>
+#include <sys/stat.h> // mkdir のため
+#include <unistd.h>   // access のため
 boost::shared_ptr<pcl::visualization::PCLVisualizer> viewer;
 static auto accumulated_cloud = boost::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
 static const size_t MAX_POINTS = 1000000; // 最大表示点数
@@ -146,7 +148,46 @@ int LdsLidar::DeInitLdsLidar(void) {
   return 0;
 }
 
+// ディレクトリを作成する関数
+void CreateDirectory(const std::string& path) {
+    if (access(path.c_str(), F_OK) == -1) { // ディレクトリが存在しない場合
+        if (mkdir(path.c_str(), 0755) == -1) { // ディレクトリを作成
+            std::cerr << "Failed to create directory " << path
+                      << ": " << strerror(errno) << std::endl;
+        }
+    }
+}
 
+// ファイルパスを生成する関数
+std::string CreateFilePath(const std::string& base_dir,uint64_t cur_timestamp, const std::string& type) {
+    // 現在時刻を取得
+    std::time_t t = std::time(nullptr);
+    std::tm local_time = *std::localtime(&t);
+    
+
+    // 時間部分をフォーマット
+    std::ostringstream date_stream, hour_stream, minute_stream;
+    date_stream << std::put_time(&local_time, "%Y%m%d");
+    hour_stream << std::put_time(&local_time, "%H00");
+    minute_stream << std::put_time(&local_time, "%M");
+
+    // yyyymmdd/hh00/mm ディレクトリを構築
+    std::string path = base_dir + "/" + type + "/" + date_stream.str() + "/" + hour_stream.str() + "/" + minute_stream.str();
+
+    // ディレクトリを作成
+    CreateDirectory(base_dir);
+    CreateDirectory(base_dir + "/" + type);
+    CreateDirectory(base_dir + "/" + type + "/" + date_stream.str());
+    CreateDirectory(base_dir + "/" + type + "/" + date_stream.str() + "/" + hour_stream.str());
+    CreateDirectory(path);
+
+    // ファイル名の生成
+    std::ostringstream file_name_stream;
+    file_name_stream << path << "/"
+                     << std::to_string(cur_timestamp); // ミリ秒部分を追加
+
+    return file_name_stream.str();
+}
 /** Static function in LdsLidar for callback or event process ------------------------------------*/
 
 /** タイムスタンプからファイル名を生成 */
@@ -160,25 +201,23 @@ std::string GenerateFileName(uint64_t timestamp) {
   return ss.str();
 }
 
-/** CSVファイルにデータを保存 */
-void SavePointsToCsv(const std::string &filename, const LivoxExtendRawPoint *points, uint32_t point_count) {
-  std::ofstream csv_file(filename);
-  if (!csv_file.is_open()) {
-    printf("Failed to open file: %s\n", filename.c_str());
-    return;
-  }
+// 点群データをCSVに保存
+void SavePointsToCsv(const std::string& filename,const pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud) {
+    std::ofstream csv_file(filename);
+    if (!csv_file.is_open()) {
+        std::cerr << "Failed to open file: " << filename << std::endl;
+        return;
+    }
 
-  csv_file << "x,y,z\n";
-  for (uint32_t i = 0; i < point_count; ++i) {
-    float x = points[i].x; // mm to meters
-    float y = points[i].y;
-    float z = points[i].z;
-    csv_file << x << "," << y << "," << z << "\n";
-  }
-
-  csv_file.close();
-  printf("Saved %u points to %s\n", point_count, filename.c_str());
+    csv_file << "x,y,z\n";
+    for (const auto& point : cloud->points) {
+        csv_file << point.x << "," << point.y << "," << point.z << "\n";
+    }
+    csv_file.close();
+    std::cout << "Saved points to " << filename << std::endl;
 }
+
+
 // ファイルからカメラ位置を読み込む
 void loadCameraPosition(pcl::visualization::PCLVisualizer::Ptr viewer) {
     std::ifstream file("camera_position.txt");
@@ -216,8 +255,6 @@ void LdsLidar::GetLidarDataCb(uint8_t handle, LivoxEthPacket *data,
     case kExtendCartesian: {
       uint32_t point_count = data_num;
       LivoxExtendRawPoint *p_point_data = (LivoxExtendRawPoint *)data->data;
-      std::string filename = "point_cloud_" + std::to_string(cur_timestamp) + ".csv"; 
-      SavePointsToCsv(filename,p_point_data, point_count);
       auto cloud = boost::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
       cloud->reserve(point_count);
       for (uint32_t i = 0; i < point_count; ++i) {
@@ -227,6 +264,8 @@ void LdsLidar::GetLidarDataCb(uint8_t handle, LivoxEthPacket *data,
             point.z = p_point_data[i].z ;
             cloud->points.push_back(point);
       }
+      std::string base_path = CreateFilePath("Lidar",cur_timestamp, "csv") + ".csv";
+      SavePointsToCsv(base_path, cloud);
 
       // 累積点群に新しい点群を追加
       *accumulated_cloud += *cloud;
@@ -242,22 +281,18 @@ void LdsLidar::GetLidarDataCb(uint8_t handle, LivoxEthPacket *data,
         accumulated_cloud->width = accumulated_cloud->points.size();
         accumulated_cloud->height = 1;
         accumulated_cloud->is_dense = true;
-	//pcl::visualization::PCLVisualizer::Ptr viewer(new pcl::visualization::PCLVisualizer("3D Viewer"));
-	
-    //viewer->setBackgroundColor(0, 0, 0);
-    //viewer->addCoordinateSystem(1.0);
 
         viewer->removeAllPointClouds();
-	viewer->addPointCloud<pcl::PointXYZ>(accumulated_cloud, "sample cloud");
+	      viewer->addPointCloud<pcl::PointXYZ>(accumulated_cloud, "sample cloud");
         viewer->setPointCloudRenderingProperties(pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 1, "sample cloud");
 	
-    viewer->initCameraParameters();
+        viewer->initCameraParameters();
         loadCameraPosition(viewer);
         printf("Total points in queue: %lu\n",accumulated_cloud->points.size());
-        std::ostringstream screenshot_filename;
-        screenshot_filename << "screenshot_" << cur_timestamp << ".png";
-        viewer->saveScreenshot(screenshot_filename.str());
-        std::cout << "Screenshot saved as " << screenshot_filename.str() << std::endl;
+        
+        std::string screenshot_path = CreateFilePath("Lidar",cur_timestamp, "png") + ".png";
+        viewer->saveScreenshot(screenshot_path);
+        std::cout << "Screenshot saved as " << screenshot_path << std::endl;
       }
        
       break;
