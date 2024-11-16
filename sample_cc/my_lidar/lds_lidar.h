@@ -81,7 +81,11 @@ class LdsLidar {
     return lds_lidar;
   }
 
-  int InitLdsLidar(std::vector<std::string>& broadcast_code_strs);
+  int InitLdsLidar(std::vector<std::string>& broadcast_code_strs, 
+                   const std::string& camera_position_path, 
+                   const std::string& save_dir_path, 
+                   size_t max_points, 
+                   size_t screenshot_interval);
   int DeInitLdsLidar(void);
 
  private:

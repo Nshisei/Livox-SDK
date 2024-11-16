@@ -41,13 +41,18 @@
 #include <unistd.h>   // access のため
 boost::shared_ptr<pcl::visualization::PCLVisualizer> viewer;
 static auto accumulated_cloud = boost::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
-static const size_t MAX_POINTS = 1000000; // 最大表示点数
 static size_t callback_count = 0;
 /** Const varible ------------------------------------------------------------------------------- */
 /** User add broadcast code here */
 static const char* local_broadcast_code_list[] = {
   "000000000000001",
 };
+
+static std::string global_camera_position_path;
+static std::string global_save_dir_path;
+static size_t global_max_points = 1000000;  // デフォルト値
+static size_t global_screenshot_interval = 100;  // デフォルト値
+
 
 /** For callback use only */
 LdsLidar* g_lidars = nullptr;
@@ -72,18 +77,36 @@ LdsLidar::LdsLidar() {
 LdsLidar::~LdsLidar(){
 }
 
-int LdsLidar::InitLdsLidar(std::vector<std::string>& broadcast_code_strs) {
+int LdsLidar::InitLdsLidar(std::vector<std::string>& broadcast_code_strs, 
+                           const std::string& camera_position_path,
+                           const std::string& save_dir_path,
+                           size_t max_points, size_t screenshot_interval) {
 
   if (is_initialized_) {
     printf("LiDAR data source is already inited!\n");
     return -1;
   }
 
+  // Lidar SDKの初期化
   if (!Init()) {
     Uninit();
     printf("Livox-SDK init fail!\n");
     return -1;
   }
+
+  // 必要な設定をクラスメンバー変数に保存
+  // グローバル変数に設定を保存
+  global_camera_position_path = camera_position_path;
+  global_save_dir_path = save_dir_path;
+  global_max_points = max_points;
+  global_screenshot_interval = screenshot_interval;
+
+  printf("Initialized with:\n");
+  printf("  Camera Position Path: %s\n", global_camera_position_path.c_str());
+  printf("  Max Points: %zu\n", global_max_points);
+  printf("  Screenshot Interval: %zu\n", global_screenshot_interval);
+
+
   viewer = boost::make_shared<pcl::visualization::PCLVisualizer>("3D Viewer"); 
   viewer->setBackgroundColor(0, 0, 0);
   viewer->addCoordinateSystem(1.0);
@@ -172,13 +195,13 @@ std::string CreateFilePath(const std::string& base_dir,uint64_t cur_timestamp, c
     minute_stream << std::put_time(&local_time, "%M");
 
     // yyyymmdd/hh00/mm ディレクトリを構築
-    std::string path = base_dir + "/" + type + "/" + date_stream.str() + "/" + hour_stream.str() + "/" + minute_stream.str();
+    std::string path = global_save_dir_path + base_dir + "/" + type + "/" + date_stream.str() + "/" + hour_stream.str() + "/" + minute_stream.str();
 
     // ディレクトリを作成
-    CreateDirectory(base_dir);
-    CreateDirectory(base_dir + "/" + type);
-    CreateDirectory(base_dir + "/" + type + "/" + date_stream.str());
-    CreateDirectory(base_dir + "/" + type + "/" + date_stream.str() + "/" + hour_stream.str());
+    CreateDirectory(global_save_dir_path + base_dir);
+    CreateDirectory(global_save_dir_path + base_dir + "/" + type);
+    CreateDirectory(global_save_dir_path + base_dir + "/" + type + "/" + date_stream.str());
+    CreateDirectory(global_save_dir_path + base_dir + "/" + type + "/" + date_stream.str() + "/" + hour_stream.str());
     CreateDirectory(path);
 
     // ファイル名の生成
@@ -220,7 +243,7 @@ void SavePointsToCsv(const std::string& filename,const pcl::PointCloud<pcl::Poin
 
 // ファイルからカメラ位置を読み込む
 void loadCameraPosition(pcl::visualization::PCLVisualizer::Ptr viewer) {
-    std::ifstream file("camera_position.txt");
+    std::ifstream file(global_camera_position_path);
     if (!file.is_open()) {
         std::cerr << "Failed to open camera position file." << std::endl;
         return;
@@ -271,13 +294,13 @@ void LdsLidar::GetLidarDataCb(uint8_t handle, LivoxEthPacket *data,
       *accumulated_cloud += *cloud;
 
       // 最大点数を超えた場合、古い点を削除
-      if (accumulated_cloud->points.size() > MAX_POINTS) {
+      if (accumulated_cloud->points.size() > global_max_points) {
            accumulated_cloud->points.erase(
             accumulated_cloud->points.begin(),
-             accumulated_cloud->points.begin() + (accumulated_cloud->points.size() - MAX_POINTS)
+             accumulated_cloud->points.begin() + (accumulated_cloud->points.size() - global_max_points)
                 );
        }
-      if (++callback_count % 1000 == 0) {
+      if (++callback_count % global_screenshot_interval == 0) {
         accumulated_cloud->width = accumulated_cloud->points.size();
         accumulated_cloud->height = 1;
         accumulated_cloud->is_dense = true;
